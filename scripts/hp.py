@@ -9,7 +9,7 @@ app = Flask(__name__)
 # ======================
 # 🔧 KONFIGURASI
 # ======================
-url = "http://192.168.106.190:4747/video"
+url = "http://192.168.1.11:4747/video"
 model_path = r"D:\Quant_ML_Project\ML.py\EasyPark\Model\parking_detection2\weights\best.pt"
 
 if not os.path.exists(model_path):
