@@ -1,89 +1,119 @@
-import cv2
-from ultralytics import YOLO
-import time
-import os
-from flask import Flask, Response
+# ===============================================================
+# 🧠 SISTEM DETEKSI PARKIR BERBASIS YOLOv8 + FLASK STREAMING
+# ===============================================================
 
-app = Flask(__name__)
+import cv2                           # Library untuk pengolahan citra dan video
+from ultralytics import YOLO         # Library YOLOv8 untuk deteksi objek
+import time                          # Untuk menghitung FPS (frame per second)
+import os                            # Untuk pengecekan file model
+from flask import Flask, Response    # Flask untuk web server dan streaming
 
 # ======================
-# 🔧 KONFIGURASI
+# 🔧 INISIALISASI FLASK
 # ======================
-url = "http://192.168.1.11:4747/video"
+app = Flask(__name__)                # Membuat instance aplikasi Flask
+
+# ======================
+# ⚙️ KONFIGURASI DASAR
+# ======================
+url = "http://192.168.1.11:4747/video"   # URL stream dari kamera HP (IP Webcam)
 model_path = r"D:\Quant_ML_Project\ML.py\EasyPark\Model\parking_detection2\weights\best.pt"
 
+# Pastikan model YOLO tersedia di path yang ditentukan
 if not os.path.exists(model_path):
     raise FileNotFoundError(f"❌ Model tidak ditemukan: {model_path}")
 
 # ======================
-# 🚀 LOAD MODEL
+# 🚀 LOAD MODEL YOLO
 # ======================
 print("🔥 Loading model...")
 try:
+    # Coba load model ke GPU (CUDA)
     model = YOLO(model_path).to("cuda")
     print("✅ Model di GPU\n")
 except:
+    # Jika tidak ada GPU, gunakan CPU
     model = YOLO(model_path)
     print("✅ Model di CPU\n")
 
 # ======================
-# 🎥 KAMERA
+# 🎥 KONEKSI KAMERA
 # ======================
 print("📸 Connecting to camera...")
-cap = cv2.VideoCapture(url)
-if not cap.isOpened():
+cap = cv2.VideoCapture(url)  # Membuka koneksi video stream dari IP camera
+
+if not cap.isOpened():       # Jika gagal membuka kamera
     raise Exception("❌ Cannot connect to camera")
 
+# Set resolusi video
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
 # ======================
-# 🎬 STREAM GENERATOR
+# 🎬 GENERATOR FRAME STREAM
 # ======================
 def generate():
-    prev_time = time.time()
-    fps_counter = 0
-    fps_display = 0
-    
+    prev_time = time.time()     # Waktu awal untuk perhitungan FPS
+    fps_counter = 0             # Hitungan frame sementara
+    fps_display = 0             # FPS yang akan ditampilkan
+
     while True:
-        ret, frame = cap.read()
-        if not ret:
+        ret, frame = cap.read()  # Baca satu frame dari kamera
+        if not ret:              # Jika gagal baca frame, tunggu sebentar
             time.sleep(0.1)
             continue
         
-        # Deteksi
-        results = model(frame, conf=0.5, verbose=False)
-        annotated_frame = results[0].plot()
-        
-        # FPS
+        # ======================
+        # 🔍 DETEKSI OBJEK YOLO
+        # ======================
+        results = model(frame, conf=0.5, verbose=False)  # Jalankan deteksi YOLO
+        annotated_frame = results[0].plot()              # Gambar bounding box ke frame
+
+        # ======================
+        # ⏱️ HITUNG FPS
+        # ======================
         fps_counter += 1
         current_time = time.time()
-        if current_time - prev_time >= 1:
+        if current_time - prev_time >= 1:                # Update tiap 1 detik
             fps_display = fps_counter / (current_time - prev_time)
             fps_counter = 0
             prev_time = current_time
         
-        # Info
+        # ======================
+        # 🧾 TAMBAHKAN INFO KE FRAME
+        # ======================
+        # Menampilkan FPS di kiri atas
         cv2.putText(annotated_frame, f"FPS: {fps_display:.1f}", 
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         
+        # Hitung jumlah objek yang terdeteksi
         num_detections = len(results[0].boxes)
+        
+        # Tampilkan jumlah objek
         cv2.putText(annotated_frame, f"Objects: {num_detections}", 
                     (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
         
-        # Encode
+        # ======================
+        # 🧩 ENKODE KE JPEG
+        # ======================
+        # Konversi frame ke format JPEG agar bisa dikirim lewat HTTP
         ret, buffer = cv2.imencode('.jpg', annotated_frame, 
                                    [cv2.IMWRITE_JPEG_QUALITY, 85])
-        frame_bytes = buffer.tobytes()
-        
+        frame_bytes = buffer.tobytes()   # Ubah hasil encode ke bytes
+
+        # ======================
+        # 🌐 STREAM DATA FRAME
+        # ======================
+        # Kirim frame ke browser dengan format multipart (streaming berkelanjutan)
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
 # ======================
-# 🌐 ROUTES
+# 🌍 ROUTE FLASK - HALAMAN UTAMA
 # ======================
 @app.route('/')
 def index():
+    # HTML tampilan utama dengan gaya modern (UI streaming)
     return """
     <!DOCTYPE html>
     <html>
@@ -130,10 +160,7 @@ def index():
                 overflow: hidden;
                 border: 2px solid #00ff88;
             }
-            img {
-                width: 100%;
-                display: block;
-            }
+            img { width: 100%; display: block; }
             .info {
                 margin-top: 30px;
                 display: grid;
@@ -158,7 +185,7 @@ def index():
         <h1>🚗 Parking Detection System</h1>
         <div class="status">🔴 LIVE</div>
         <div class="container">
-            <img src="/video" alt="Stream">
+            <img src="/video" alt="Stream">  <!-- Stream video dari route /video -->
         </div>
         <div class="info">
             <div class="card">
@@ -181,12 +208,16 @@ def index():
     </html>
     """
 
+# ======================
+# 🎥 ROUTE FLASK - STREAM VIDEO
+# ======================
 @app.route('/video')
 def video():
+    # Mengirim hasil deteksi secara real-time
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 # ======================
-# 🚀 RUN
+# 🚀 MENJALANKAN SERVER FLASK
 # ======================
 if __name__ == '__main__':
     print("\n" + "="*50)
@@ -197,4 +228,5 @@ if __name__ == '__main__':
     print("\n⌨️  Press Ctrl+C to stop")
     print("="*50 + "\n")
     
+    # Jalankan Flask di semua IP (agar bisa diakses dari HP/laptop lain dalam 1 jaringan)
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
